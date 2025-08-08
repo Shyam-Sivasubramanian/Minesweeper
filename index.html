@@ -112,7 +112,8 @@
         <option value="hard">Hard (24x24, 99 mines)</option>
       </select>
     </label>
-    <button onclick="resetGame()">Reset Game</button>
+    <button onclick="resetGame()">New Game</button>
+    <button onclick="retryGame()" id="retryBtn">Retry Same Puzzle</button>
     <button onclick="toggleAutoSolve()" id="autoSolveBtn">Start Auto-Solve</button>
     <span id="timer">Time: 0s</span>
     <span id="mines-counter">Mines: 0</span>
@@ -139,6 +140,7 @@
     let gameStarted = false, gameEnded = false;
     let autoSolving = false;
     let flagMode = false;
+    let savedBoard = []; // Store the original board for retry functionality
 
     function setDifficulty() {
       const level = document.getElementById('difficulty').value;
@@ -158,6 +160,8 @@
       flagged = Array(gridSize * gridSize).fill(false);
       placeMines();
       calculateNumbers();
+      // Save the board for retry functionality
+      savedBoard = [...board];
       updateMinesCounter();
     }
 
@@ -326,6 +330,14 @@
         if (visited.has(index) || revealed[index] || flagged[index]) continue;
         visited.add(index);
         
+        // Check if this cell is a mine before revealing
+        if (board[index] === 'M') {
+          revealed[index] = true; // Reveal the mine that was hit
+          updateCellDisplay(index);
+          gameOver(false);
+          return;
+        }
+        
         revealed[index] = true;
         updateCellDisplay(index);
         
@@ -363,6 +375,11 @@
     function gameOver(won) {
       gameEnded = true;
       stopTimer();
+      
+      // Check if auto-solver was running before we reset it
+      const wasAutoSolving = autoSolving;
+      
+      // Stop auto-solving immediately when game ends
       autoSolving = false;
       document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
       
@@ -393,7 +410,11 @@
         document.getElementById("status").textContent = `🎉 You won! Time: ${timer}s`;
         document.getElementById("status").style.color = "green";
       } else {
-        document.getElementById("status").textContent = "💥 Game Over!";
+        if (wasAutoSolving) {
+          document.getElementById("status").textContent = "💥 AI hit a mine! Game Over! (Click 'Retry Same Puzzle' to try again)";
+        } else {
+          document.getElementById("status").textContent = "💥 Game Over! (Click 'Retry Same Puzzle' to try again)";
+        }
         document.getElementById("status").style.color = "red";
       }
     }
@@ -442,7 +463,36 @@
       document.getElementById("timer").textContent = "Time: 0s";
       
       setDifficulty();
-      createBoard();
+      createBoard(); // This will create a new random board
+      renderBoard();
+    }
+
+    function retryGame() {
+      if (savedBoard.length === 0) {
+        // No saved board, create new game
+        resetGame();
+        return;
+      }
+      
+      stopTimer();
+      gameStarted = false;
+      gameEnded = false;
+      autoSolving = false;
+      flagMode = false;
+      
+      // Restore the saved board
+      board = [...savedBoard];
+      revealed = Array(gridSize * gridSize).fill(false);
+      flagged = Array(gridSize * gridSize).fill(false);
+      
+      document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
+      document.getElementById("flagModeBtn").textContent = "Flag Mode: OFF";
+      document.getElementById("flagModeBtn").classList.remove('flag-mode-active');
+      document.getElementById("status").textContent = "Same puzzle - Click any cell to start";
+      document.getElementById("status").style.color = "black";
+      document.getElementById("timer").textContent = "Time: 0s";
+      
+      updateMinesCounter();
       renderBoard();
     }
 
@@ -493,22 +543,41 @@
         
         progress = await basicConstraintSolving() || progress;
         
-        if (gameEnded) break;
+        // Check if game ended (mine hit) during solving
+        if (gameEnded) {
+          autoSolving = false;
+          document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
+          break;
+        }
         
         if (!progress) {
           progress = await advancedConstraintSolving() || progress;
         }
         
-        if (gameEnded) break;
+        if (gameEnded) {
+          autoSolving = false;
+          document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
+          break;
+        }
         
         if (!progress) {
           progress = await makeEducatedGuess() || progress;
         }
         
-        if (gameEnded) break;
+        if (gameEnded) {
+          autoSolving = false;
+          document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
+          break;
+        }
         
         if (!progress) {
           progress = await makeRandomFrontierGuess() || progress;
+        }
+        
+        if (gameEnded) {
+          autoSolving = false;
+          document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
+          break;
         }
         
         if (!progress) {
@@ -522,7 +591,7 @@
         iterations++;
       }
       
-      if (iterations >= maxIterations) {
+      if (iterations >= maxIterations && autoSolving) {
         autoSolving = false;
         document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
         document.getElementById("status").textContent = "AI solver reached iteration limit";
@@ -543,6 +612,7 @@
         if (requiredMines === 0 && unrevealed.length > 0) {
           for (const n of unrevealed) {
             floodFillReveal(n);
+            if (gameEnded) return progress; // Stop immediately if mine hit
             await sleep(30);
             progress = true;
           }
@@ -561,7 +631,9 @@
       }
       
       if (progress) {
-        checkWin();
+        if (!gameEnded) { // Only check win if game hasn't ended in loss
+          checkWin();
+        }
       }
       return progress;
     }
@@ -599,6 +671,7 @@
             if (remainingMines === 0) {
               for (const cell of remainingCells) {
                 floodFillReveal(cell);
+                if (gameEnded) return progress; // Stop if mine hit
                 await sleep(30);
                 progress = true;
               }
@@ -616,7 +689,9 @@
       }
       
       if (progress) {
-        checkWin();
+        if (!gameEnded) { // Only check win if game hasn't ended in loss
+          checkWin();
+        }
       }
       return progress;
     }
@@ -656,7 +731,9 @@
         
         const bestCell = frontierCells[0];
         floodFillReveal(bestCell.index);
-        checkWin();
+        if (!gameEnded) { // Only check win if no mine was hit
+          checkWin();
+        }
         return true;
       }
       
@@ -680,7 +757,9 @@
       if (frontierCells.length > 0) {
         const randomCell = frontierCells[Math.floor(Math.random() * frontierCells.length)];
         floodFillReveal(randomCell);
-        checkWin();
+        if (!gameEnded) { // Only check win if no mine was hit
+          checkWin();
+        }
         return true;
       }
       
