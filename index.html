@@ -18,10 +18,20 @@
       font-weight: bold;
       margin-left: 20px;
     }
+    #mines-counter {
+      font-weight: bold;
+      margin-left: 20px;
+      color: #d32f2f;
+    }
     #status {
       margin: 10px 0;
       font-weight: bold;
       font-size: 18px;
+    }
+    #instructions {
+      margin: 10px 0;
+      font-size: 14px;
+      color: #666;
     }
     #grid {
       display: grid;
@@ -40,18 +50,31 @@
       font-size: 14px;
       font-weight: bold;
       cursor: pointer;
+      user-select: none;
+    }
+    .cell:hover:not(.revealed):not(.flagged) {
+      background-color: #ddd;
     }
     .revealed {
       background-color: #e0e0e0;
       border: 1px solid #999;
+      cursor: default;
     }
     .mine {
       background-color: red;
       color: white;
     }
     .flagged {
-      background-color: orange;
+      background-color: #ff9800;
       color: white;
+      border-color: #f57c00;
+    }
+    .flagged:hover {
+      background-color: #ffb74d;
+    }
+    .wrongly-flagged {
+      background-color: #ffcdd2;
+      color: red;
     }
     .cell-1 { color: blue; }
     .cell-2 { color: green; }
@@ -61,6 +84,22 @@
     .cell-6 { color: turquoise; }
     .cell-7 { color: black; }
     .cell-8 { color: gray; }
+    
+    #flag-mode {
+      margin: 10px;
+    }
+    
+    .flag-mode-active {
+      background-color: #ff9800 !important;
+      color: white !important;
+      border: 2px solid #f57c00 !important;
+    }
+    
+    button {
+      margin: 0 5px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -76,7 +115,20 @@
     <button onclick="resetGame()">Reset Game</button>
     <button onclick="toggleAutoSolve()" id="autoSolveBtn">Start Auto-Solve</button>
     <span id="timer">Time: 0s</span>
+    <span id="mines-counter">Mines: 0</span>
   </div>
+  
+  <div id="flag-mode">
+    <button id="flagModeBtn" onclick="toggleFlagMode()">Flag Mode: OFF</button>
+    <span style="font-size: 12px; color: #666;">
+      (Or right-click to flag/unflag individual cells)
+    </span>
+  </div>
+  
+  <div id="instructions">
+    Left click to reveal • Right click or Flag Mode to flag/unflag • Flag all mines to win!
+  </div>
+  
   <div id="status">Click Reset to start a new game</div>
   <div id="grid"></div>
 
@@ -86,6 +138,7 @@
     let timer = 0, timerInterval;
     let gameStarted = false, gameEnded = false;
     let autoSolving = false;
+    let flagMode = false;
 
     function setDifficulty() {
       const level = document.getElementById('difficulty').value;
@@ -105,6 +158,7 @@
       flagged = Array(gridSize * gridSize).fill(false);
       placeMines();
       calculateNumbers();
+      updateMinesCounter();
     }
 
     function placeMines() {
@@ -155,17 +209,39 @@
         const cell = document.createElement("div");
         cell.className = 'cell';
         cell.id = `cell-${i}`;
-        cell.onclick = () => manualReveal(i);
+        cell.onclick = () => handleCellClick(i);
         cell.oncontextmenu = (e) => {
           e.preventDefault();
           toggleFlag(i);
         };
         grid.appendChild(cell);
       }
+      updateAllCellDisplays();
+    }
+
+    function handleCellClick(index) {
+      if (flagMode) {
+        toggleFlag(index);
+      } else {
+        manualReveal(index);
+      }
+    }
+
+    function toggleFlagMode() {
+      flagMode = !flagMode;
+      const btn = document.getElementById('flagModeBtn');
+      btn.textContent = flagMode ? 'Flag Mode: ON' : 'Flag Mode: OFF';
+      if (flagMode) {
+        btn.classList.add('flag-mode-active');
+      } else {
+        btn.classList.remove('flag-mode-active');
+      }
     }
 
     function updateCellDisplay(index) {
       const cell = document.getElementById(`cell-${index}`);
+      if (!cell) return;
+      
       if (flagged[index]) {
         cell.textContent = '🚩';
         cell.className = 'cell flagged';
@@ -178,10 +254,33 @@
         } else if (value > 0) {
           cell.textContent = value;
           cell.classList.add(`cell-${value}`);
+        } else {
+          cell.textContent = '';
         }
       } else {
         cell.textContent = '';
         cell.className = 'cell';
+      }
+    }
+
+    function updateAllCellDisplays() {
+      for (let i = 0; i < board.length; i++) {
+        updateCellDisplay(i);
+      }
+    }
+
+    function updateMinesCounter() {
+      const flaggedCount = flagged.filter(f => f).length;
+      const remaining = numMines - flaggedCount;
+      document.getElementById('mines-counter').textContent = `Mines: ${remaining}`;
+      
+      const counter = document.getElementById('mines-counter');
+      if (remaining < 0) {
+        counter.style.color = '#f44336';
+      } else if (remaining === 0) {
+        counter.style.color = '#4caf50';
+      } else {
+        counter.style.color = '#d32f2f';
       }
     }
 
@@ -204,8 +303,17 @@
     function toggleFlag(index) {
       if (gameEnded || revealed[index]) return;
       
+      if (!gameStarted && !flagged[index]) {
+        startGame();
+      }
+      
       flagged[index] = !flagged[index];
       updateCellDisplay(index);
+      updateMinesCounter();
+      
+      if (gameStarted) {
+        checkWin();
+      }
     }
 
     function floodFillReveal(startIndex) {
@@ -221,7 +329,6 @@
         revealed[index] = true;
         updateCellDisplay(index);
         
-        // If this cell is a 0, reveal all neighbors
         if (board[index] === 0) {
           const neighbors = getNeighbors(index);
           neighbors.forEach(n => {
@@ -259,11 +366,26 @@
       autoSolving = false;
       document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
       
-      // Reveal all mines
+      // Reveal all cells at game end
       for (let i = 0; i < board.length; i++) {
         if (board[i] === 'M') {
-          revealed[i] = true;
-          updateCellDisplay(i);
+          // Show mines (unless correctly flagged)
+          if (!flagged[i]) {
+            revealed[i] = true;
+            updateCellDisplay(i);
+          }
+        } else {
+          // Reveal all non-mine cells
+          if (!revealed[i]) {
+            revealed[i] = true;
+            updateCellDisplay(i);
+          }
+          // Mark incorrectly flagged non-mine cells
+          if (flagged[i]) {
+            const cell = document.getElementById(`cell-${i}`);
+            cell.classList.add('wrongly-flagged');
+            cell.textContent = '❌';
+          }
         }
       }
       
@@ -284,7 +406,23 @@
         }
       }
       
-      if (revealedCount === board.length - numMines) {
+      const allNonMinesRevealed = (revealedCount === board.length - numMines);
+      
+      let correctlyFlagged = 0;
+      let incorrectlyFlagged = 0;
+      for (let i = 0; i < board.length; i++) {
+        if (flagged[i]) {
+          if (board[i] === 'M') {
+            correctlyFlagged++;
+          } else {
+            incorrectlyFlagged++;
+          }
+        }
+      }
+      
+      const allMinesFlagged = (correctlyFlagged === numMines && incorrectlyFlagged === 0);
+      
+      if (allNonMinesRevealed || allMinesFlagged) {
         gameOver(true);
       }
     }
@@ -294,7 +432,11 @@
       gameStarted = false;
       gameEnded = false;
       autoSolving = false;
+      flagMode = false;
+      
       document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
+      document.getElementById("flagModeBtn").textContent = "Flag Mode: OFF";
+      document.getElementById("flagModeBtn").classList.remove('flag-mode-active');
       document.getElementById("status").textContent = "Click any cell to start";
       document.getElementById("status").style.color = "black";
       document.getElementById("timer").textContent = "Time: 0s";
@@ -309,7 +451,6 @@
       
       if (!autoSolving) {
         if (!gameStarted) {
-          // Start game by revealing a safe cell
           revealInitialSafeCell();
         }
         autoSolving = true;
@@ -322,7 +463,6 @@
     }
 
     function revealInitialSafeCell() {
-      // Find a cell with 0 mines around it for best opening
       let bestCell = -1;
       let minNeighborMines = Infinity;
       
@@ -346,43 +486,31 @@
 
     async function runSolver() {
       let iterations = 0;
-      const maxIterations = 2000; // Increased iteration limit
+      const maxIterations = 2000;
       
       while (autoSolving && !gameEnded && iterations < maxIterations) {
         let progress = false;
         
-        // 1. Basic constraint solving (fast and reliable)
         progress = await basicConstraintSolving() || progress;
         
         if (gameEnded) break;
         
-        // 2. Advanced constraint solving (more complex patterns)
         if (!progress) {
           progress = await advancedConstraintSolving() || progress;
         }
         
         if (gameEnded) break;
         
-        // 3. Tank solver approach for complex situations
-        if (!progress) {
-          progress = await tankSolverApproach() || progress;
-        }
-        
-        if (gameEnded) break;
-        
-        // 4. Educated guessing (probabilistic)
         if (!progress) {
           progress = await makeEducatedGuess() || progress;
         }
         
         if (gameEnded) break;
         
-        // 5. If all else fails, make a random guess on frontier
         if (!progress) {
           progress = await makeRandomFrontierGuess() || progress;
         }
         
-        // If still no progress, we're truly stuck
         if (!progress) {
           autoSolving = false;
           document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
@@ -390,7 +518,7 @@
           break;
         }
         
-        await sleep(25); // Slightly faster animation
+        await sleep(25);
         iterations++;
       }
       
@@ -399,125 +527,6 @@
         document.getElementById("autoSolveBtn").textContent = "Start Auto-Solve";
         document.getElementById("status").textContent = "AI solver reached iteration limit";
       }
-    }
-
-    async function tankSolverApproach() {
-      // Implement a simplified version of the "tank" algorithm
-      // This tries to enumerate all possible mine configurations
-      const constraints = [];
-      
-      // Build constraints
-      for (let i = 0; i < board.length; i++) {
-        if (!revealed[i] || typeof board[i] !== 'number') continue;
-        
-        const neighbors = getNeighbors(i);
-        const unrevealed = neighbors.filter(n => !revealed[n] && !flagged[n]);
-        const flaggedCount = neighbors.filter(n => flagged[n]).length;
-        const requiredMines = board[i] - flaggedCount;
-        
-        if (unrevealed.length > 0) {
-          constraints.push({ cells: unrevealed, mines: requiredMines });
-        }
-      }
-      
-      if (constraints.length === 0) return false;
-      
-      // Get all frontier cells
-      const frontierCells = [...new Set(constraints.flatMap(c => c.cells))];
-      
-      if (frontierCells.length > 15) {
-        // Too complex for brute force, fall back to heuristics
-        return false;
-      }
-      
-      // Try all possible mine configurations (simplified)
-      const validConfigurations = [];
-      const totalConfigs = Math.pow(2, frontierCells.length);
-      
-      // Limit configurations to prevent timeout
-      const maxConfigs = Math.min(totalConfigs, 1024);
-      
-      for (let config = 0; config < maxConfigs; config++) {
-        const mineConfig = [];
-        
-        for (let i = 0; i < frontierCells.length; i++) {
-          mineConfig.push((config & (1 << i)) !== 0);
-        }
-        
-        // Check if this configuration satisfies all constraints
-        let valid = true;
-        for (const constraint of constraints) {
-          let mineCount = 0;
-          for (const cell of constraint.cells) {
-            const cellIndex = frontierCells.indexOf(cell);
-            if (cellIndex !== -1 && mineConfig[cellIndex]) {
-              mineCount++;
-            }
-          }
-          
-          if (mineCount !== constraint.mines) {
-            valid = false;
-            break;
-          }
-        }
-        
-        if (valid) {
-          validConfigurations.push(mineConfig);
-        }
-      }
-      
-      if (validConfigurations.length === 0) return false;
-      
-      // Find cells that are always safe or always mines
-      let progress = false;
-      
-      for (let i = 0; i < frontierCells.length; i++) {
-        const cell = frontierCells[i];
-        const alwaysMine = validConfigurations.every(config => config[i]);
-        const alwaysSafe = validConfigurations.every(config => !config[i]);
-        
-        if (alwaysSafe) {
-          floodFillReveal(cell);
-          await sleep(30);
-          progress = true;
-        } else if (alwaysMine) {
-          flagged[cell] = true;
-          updateCellDisplay(cell);
-          await sleep(30);
-          progress = true;
-        }
-      }
-      
-      if (progress) {
-        checkWin();
-      }
-      
-      return progress;
-    }
-
-    async function makeRandomFrontierGuess() {
-      // Last resort: make a random guess on a frontier cell
-      const frontierCells = [];
-      
-      for (let i = 0; i < board.length; i++) {
-        if (revealed[i] || flagged[i]) continue;
-        
-        const neighbors = getNeighbors(i);
-        const hasRevealedNeighbor = neighbors.some(n => revealed[n] && typeof board[n] === 'number');
-        
-        if (hasRevealedNeighbor) {
-          frontierCells.push(i);
-        }
-      }
-      
-      if (frontierCells.length > 0) {
-        const randomCell = frontierCells[Math.floor(Math.random() * frontierCells.length)];
-        floodFillReveal(randomCell);
-        checkWin();
-        return true;
-      }
-      
-      return false;
     }
 
     async function basicConstraintSolving() {
@@ -531,7 +540,6 @@
         const flaggedCount = neighbors.filter(n => flagged[n]).length;
         const requiredMines = board[i] - flaggedCount;
         
-        // If we've found all mines around this cell, reveal the rest
         if (requiredMines === 0 && unrevealed.length > 0) {
           for (const n of unrevealed) {
             floodFillReveal(n);
@@ -539,11 +547,11 @@
             progress = true;
           }
         }
-        // If remaining unrevealed cells must all be mines, flag them
         else if (requiredMines === unrevealed.length && unrevealed.length > 0) {
           for (const n of unrevealed) {
             flagged[n] = true;
             updateCellDisplay(n);
+            updateMinesCounter();
             await sleep(30);
             progress = true;
           }
@@ -561,7 +569,6 @@
     async function advancedConstraintSolving() {
       const constraints = [];
       
-      // Build constraints from revealed numbered cells
       for (let i = 0; i < board.length; i++) {
         if (!revealed[i] || typeof board[i] !== 'number') continue;
         
@@ -573,50 +580,23 @@
         if (unrevealed.length > 0) {
           constraints.push({ 
             cells: unrevealed, 
-            mines: requiredMines,
-            center: i 
+            mines: requiredMines
           });
         }
       }
       
-      // Advanced constraint solving with multiple techniques
       let progress = false;
       
-      // 1. Subset/superset analysis
       for (let i = 0; i < constraints.length && !progress; i++) {
         for (let j = i + 1; j < constraints.length && !progress; j++) {
           const c1 = constraints[i];
           const c2 = constraints[j];
           
-          // Check if c1 is subset of c2
           if (c1.cells.every(cell => c2.cells.includes(cell))) {
             const remainingCells = c2.cells.filter(cell => !c1.cells.includes(cell));
             const remainingMines = c2.mines - c1.mines;
             
             if (remainingMines === 0) {
-              // All remaining cells are safe
-              for (const cell of remainingCells) {
-                floodFillReveal(cell);
-                await sleep(30);
-                progress = true;
-              }
-            } else if (remainingMines === remainingCells.length) {
-              // All remaining cells are mines
-              for (const cell of remainingCells) {
-                flagged[cell] = true;
-                updateCellDisplay(cell);
-                await sleep(30);
-                progress = true;
-              }
-            }
-          }
-          
-          // Check if c2 is subset of c1
-          if (c2.cells.every(cell => c1.cells.includes(cell))) {
-            const remainingCells = c1.cells.filter(cell => !c2.cells.includes(cell));
-            const remainingMines = c1.mines - c2.mines;
-            
-            if (remainingMines === 0) {
               for (const cell of remainingCells) {
                 floodFillReveal(cell);
                 await sleep(30);
@@ -626,71 +606,9 @@
               for (const cell of remainingCells) {
                 flagged[cell] = true;
                 updateCellDisplay(cell);
+                updateMinesCounter();
                 await sleep(30);
                 progress = true;
-              }
-            }
-          }
-        }
-      }
-      
-      // 2. Intersection analysis
-      if (!progress) {
-        for (let i = 0; i < constraints.length && !progress; i++) {
-          for (let j = i + 1; j < constraints.length && !progress; j++) {
-            const c1 = constraints[i];
-            const c2 = constraints[j];
-            const intersection = c1.cells.filter(cell => c2.cells.includes(cell));
-            
-            if (intersection.length > 0 && intersection.length < c1.cells.length && intersection.length < c2.cells.length) {
-              const c1Only = c1.cells.filter(cell => !c2.cells.includes(cell));
-              const c2Only = c2.cells.filter(cell => !c1.cells.includes(cell));
-              
-              // Try different mine distributions in intersection
-              for (let minesInIntersection = Math.max(0, c1.mines - c1Only.length); 
-                   minesInIntersection <= Math.min(intersection.length, c1.mines, c2.mines); 
-                   minesInIntersection++) {
-                
-                const c1OnlyMines = c1.mines - minesInIntersection;
-                const c2OnlyMines = c2.mines - minesInIntersection;
-                
-                if (c1OnlyMines >= 0 && c1OnlyMines <= c1Only.length && 
-                    c2OnlyMines >= 0 && c2OnlyMines <= c2Only.length) {
-                  
-                  if (c1OnlyMines === 0) {
-                    // All c1Only cells are safe
-                    for (const cell of c1Only) {
-                      floodFillReveal(cell);
-                      await sleep(30);
-                      progress = true;
-                    }
-                  } else if (c1OnlyMines === c1Only.length) {
-                    // All c1Only cells are mines
-                    for (const cell of c1Only) {
-                      flagged[cell] = true;
-                      updateCellDisplay(cell);
-                      await sleep(30);
-                      progress = true;
-                    }
-                  }
-                  
-                  if (c2OnlyMines === 0) {
-                    // All c2Only cells are safe
-                    for (const cell of c2Only) {
-                      floodFillReveal(cell);
-                      await sleep(30);
-                      progress = true;
-                    }
-                  } else if (c2OnlyMines === c2Only.length) {
-                    // All c2Only cells are mines
-                    for (const cell of c2Only) {
-                      flagged[cell] = true;
-                      updateCellDisplay(cell);
-                      await sleep(30);
-                      progress = true;
-                    }
-                  }
-                }
               }
             }
           }
@@ -704,135 +622,64 @@
     }
 
     async function makeEducatedGuess() {
-      // Advanced probabilistic analysis
-      const cellProbabilities = calculateCellProbabilities();
+      const frontierCells = [];
       
-      // Find cells with probability 0 (definitely safe)
-      for (const [cell, prob] of cellProbabilities) {
-        if (prob === 0) {
-          floodFillReveal(cell);
-          checkWin();
-          return true;
-        }
-      }
-      
-      // Find cells with probability 1 (definitely mines)
-      for (const [cell, prob] of cellProbabilities) {
-        if (prob === 1) {
-          flagged[cell] = true;
-          updateCellDisplay(cell);
-          await sleep(30);
-          return true;
-        }
-      }
-      
-      // If no definite moves, make educated guess on lowest probability cell
-      if (cellProbabilities.length > 0) {
-        const sortedCells = cellProbabilities.sort((a, b) => a[1] - b[1]);
-        const bestCell = sortedCells[0][0];
-        const bestProbability = sortedCells[0][1];
-        
-        // Only guess if probability is reasonable
-        if (bestProbability <= 0.4) {
-          floodFillReveal(bestCell);
-          checkWin();
-          return true;
-        }
-      }
-      
-      // Last resort: try corner/edge strategy
-      return tryCornerEdgeStrategy();
-    }
-
-    function calculateCellProbabilities() {
-      const probabilities = [];
-      const constraints = [];
-      
-      // Build constraint system
       for (let i = 0; i < board.length; i++) {
-        if (!revealed[i] || typeof board[i] !== 'number') continue;
+        if (revealed[i] || flagged[i]) continue;
         
         const neighbors = getNeighbors(i);
-        const unrevealed = neighbors.filter(n => !revealed[n] && !flagged[n]);
-        const flaggedCount = neighbors.filter(n => flagged[n]).length;
-        const requiredMines = board[i] - flaggedCount;
+        const hasRevealedNeighbor = neighbors.some(n => revealed[n] && typeof board[n] === 'number');
         
-        if (unrevealed.length > 0) {
-          constraints.push({ 
-            cells: unrevealed, 
-            mines: requiredMines 
-          });
-        }
-      }
-      
-      // Get all frontier cells (unrevealed cells adjacent to revealed numbers)
-      const frontierCells = new Set();
-      constraints.forEach(c => c.cells.forEach(cell => frontierCells.add(cell)));
-      
-      // Calculate probability for each frontier cell
-      for (const cell of frontierCells) {
-        if (revealed[cell] || flagged[cell]) continue;
-        
-        const relevantConstraints = constraints.filter(c => c.cells.includes(cell));
-        
-        if (relevantConstraints.length === 0) continue;
-        
-        // Simple probability calculation based on local constraints
-        let totalProb = 0;
-        let count = 0;
-        
-        for (const constraint of relevantConstraints) {
-          if (constraint.cells.length > 0) {
-            const prob = constraint.mines / constraint.cells.length;
-            totalProb += prob;
-            count++;
-          }
-        }
-        
-        if (count > 0) {
-          probabilities.push([cell, totalProb / count]);
-        }
-      }
-      
-      return probabilities;
-    }
-
-    async function tryCornerEdgeStrategy() {
-      // Try corners first, then edges, as they statistically have fewer mines
-      const unrevealedCells = [];
-      
-      for (let i = 0; i < board.length; i++) {
-        if (!revealed[i] && !flagged[i]) {
+        if (hasRevealedNeighbor) {
           const x = i % gridSize;
           const y = Math.floor(i / gridSize);
-          const neighbors = getNeighbors(i);
-          const revealedNeighbors = neighbors.filter(n => revealed[n]).length;
+          const isCorner = (x === 0 || x === gridSize - 1) && (y === 0 || y === gridSize - 1);
+          const isEdge = x === 0 || x === gridSize - 1 || y === 0 || y === gridSize - 1;
           
-          // Prioritize cells with more revealed neighbors (more information)
-          unrevealedCells.push({ 
+          frontierCells.push({ 
             index: i, 
-            x, 
-            y, 
-            revealedNeighbors,
-            isCorner: (x === 0 || x === gridSize - 1) && (y === 0 || y === gridSize - 1),
-            isEdge: x === 0 || x === gridSize - 1 || y === 0 || y === gridSize - 1
+            isCorner, 
+            isEdge,
+            revealedNeighbors: neighbors.filter(n => revealed[n]).length
           });
         }
       }
       
-      // Sort by preference: corners first, then edges, then by revealed neighbors
-      unrevealedCells.sort((a, b) => {
-        if (a.isCorner && !b.isCorner) return -1;
-        if (!a.isCorner && b.isCorner) return 1;
-        if (a.isEdge && !b.isEdge) return -1;
-        if (!a.isEdge && b.isEdge) return 1;
-        return b.revealedNeighbors - a.revealedNeighbors;
-      });
-      
-      // Try the best candidate
-      if (unrevealedCells.length > 0) {
-        const bestCell = unrevealedCells[0];
+      if (frontierCells.length > 0) {
+        frontierCells.sort((a, b) => {
+          if (a.isCorner && !b.isCorner) return -1;
+          if (!a.isCorner && b.isCorner) return 1;
+          if (a.isEdge && !b.isEdge) return -1;
+          if (!a.isEdge && b.isEdge) return 1;
+          return b.revealedNeighbors - a.revealedNeighbors;
+        });
+        
+        const bestCell = frontierCells[0];
         floodFillReveal(bestCell.index);
+        checkWin();
+        return true;
+      }
+      
+      return false;
+    }
+
+    async function makeRandomFrontierGuess() {
+      const frontierCells = [];
+      
+      for (let i = 0; i < board.length; i++) {
+        if (revealed[i] || flagged[i]) continue;
+        
+        const neighbors = getNeighbors(i);
+        const hasRevealedNeighbor = neighbors.some(n => revealed[n] && typeof board[n] === 'number');
+        
+        if (hasRevealedNeighbor) {
+          frontierCells.push(i);
+        }
+      }
+      
+      if (frontierCells.length > 0) {
+        const randomCell = frontierCells[Math.floor(Math.random() * frontierCells.length)];
+        floodFillReveal(randomCell);
         checkWin();
         return true;
       }
