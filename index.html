@@ -522,8 +522,8 @@
       if (gameEnded) return;
       
       if (!autoSolving) {
-        if (firstClick) {
-          // Need to make a first click to generate the board
+        if (!gameStarted) {
+          // Need to make a first click to start the game
           revealInitialSafeCell();
         }
         if (!gameStarted) {
@@ -539,12 +539,40 @@
     }
 
     function revealInitialSafeCell() {
-      // For auto-solve, just pick a corner or edge cell as it's statistically safer
+      // For auto-solve, pick a corner or edge cell as it's statistically safer
       let bestCell = -1;
       
-      // Try corners first
-      const corners = [0, gridSize - 1, gridSize * (gridSize - 1), gridSize * gridSize - 1];
-      bestCell = corners[Math.floor(Math.random() * corners.length)];
+      if (firstClick) {
+        // If it's truly the first click, try corners first
+        const corners = [0, gridSize - 1, gridSize * (gridSize - 1), gridSize * gridSize - 1];
+        bestCell = corners[Math.floor(Math.random() * corners.length)];
+      } else {
+        // If board already exists (retry scenario), find a safe non-mine cell
+        for (let i = 0; i < board.length; i++) {
+          if (!revealed[i] && !flagged[i] && board[i] !== 'M') {
+            const x = i % gridSize;
+            const y = Math.floor(i / gridSize);
+            const isCorner = (x === 0 || x === gridSize - 1) && (y === 0 || y === gridSize - 1);
+            const isEdge = x === 0 || x === gridSize - 1 || y === 0 || y === gridSize - 1;
+            
+            // Prefer corners and edges, then cells with low mine count
+            if (isCorner || isEdge || board[i] === 0) {
+              bestCell = i;
+              break;
+            }
+          }
+        }
+        
+        // If no good cell found, just pick any safe unrevealed cell
+        if (bestCell === -1) {
+          for (let i = 0; i < board.length; i++) {
+            if (!revealed[i] && !flagged[i] && board[i] !== 'M') {
+              bestCell = i;
+              break;
+            }
+          }
+        }
+      }
       
       if (bestCell !== -1) {
         manualReveal(bestCell);
